@@ -6,7 +6,7 @@ Conflicts=getty@tty1.service
 [Service]
 Type=simple
 Environment=LANG=en_US.UTF-8
-ExecStart=/usr/local/bin/tui-dm
+ExecStart=/usr/local/bin/VAXPDM
 StandardInput=tty
 StandardOutput=tty
 TTYPath=/dev/tty1

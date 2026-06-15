@@ -9,6 +9,8 @@
 #include <grp.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
+#include <sys/vt.h>
+#include <sys/stat.h>
 #include <fcntl.h>
 
 extern char **environ;
@@ -139,6 +141,22 @@ bool launch_session(const session_t *session, const char *username, const char *
         if (tty_name) {
             int fd = open(tty_name, O_RDWR);
             if (fd >= 0) {
+                // Change ownership of the TTY to the user
+                if (fchown(fd, pw->pw_uid, pw->pw_gid) < 0) {
+                    perror("fchown failed");
+                }
+                // Set permissions to read/write for user only (0600)
+                if (fchmod(fd, 0600) < 0) {
+                    perror("fchmod failed");
+                }
+
+                // Activate the VT if it's a virtual terminal (e.g. /dev/tty2)
+                int vt_num = -1;
+                if (sscanf(tty_name, "/dev/tty%d", &vt_num) == 1) {
+                    ioctl(fd, VT_ACTIVATE, vt_num);
+                    ioctl(fd, VT_WAITACTIVE, vt_num);
+                }
+
                 // TIOCSCTTY with arg=1 steals the TTY if it's already in use
                 ioctl(fd, TIOCSCTTY, 1);
                 dup2(fd, STDIN_FILENO);
@@ -170,6 +188,12 @@ bool launch_session(const session_t *session, const char *username, const char *
         setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", 1);
         if (tty_name) {
             setenv("TTY", tty_name, 1);
+            int vt_num = -1;
+            if (sscanf(tty_name, "/dev/tty%d", &vt_num) == 1) {
+                char vtnr[12];
+                snprintf(vtnr, sizeof(vtnr), "%d", vt_num);
+                setenv("XDG_VTNR", vtnr, 1);
+            }
         }
         
         // Change working directory to user home
@@ -190,5 +214,18 @@ bool launch_session(const session_t *session, const char *username, const char *
     // Parent process: wait for user session to exit
     int status;
     waitpid(pid, &status, 0);
+
+    // Restore TTY ownership and mode
+    if (tty_name && !mock_mode) {
+        struct group *gr = getgrnam("tty");
+        gid_t tty_gid = gr ? gr->gr_gid : 0;
+        if (chown(tty_name, 0, tty_gid) < 0) {
+            perror("chown failed to restore TTY owner");
+        }
+        if (chmod(tty_name, 0620) < 0) {
+            perror("chmod failed to restore TTY mode");
+        }
+    }
+
     return true;
 }

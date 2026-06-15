@@ -2,7 +2,7 @@ CC = gcc
 CFLAGS = -Wall -Wextra -O2 -std=gnu11 $(shell pkg-config --cflags libdrm cairo pangocairo gdk-pixbuf-2.0 xkbcommon gtk+-3.0 2>/dev/null || echo "")
 LIBS = $(shell pkg-config --libs libdrm cairo pangocairo gdk-pixbuf-2.0 xkbcommon gtk+-3.0 2>/dev/null || echo "-ldrm -lcairo -lpangocairo-1.0 -lpango-1.0 -lgdk_pixbuf-2.0 -lxkbcommon -lgtk-3 -lgdk-3") -lpam
 
-TARGET = tui-dm
+TARGET = VAXPDM
 SRC_DIR = src
 OBJ_DIR = obj
 

@@ -22,6 +22,7 @@
 #include <sys/types.h>
 #include <pwd.h>
 #include <sys/kd.h>
+#include <sys/vt.h>
 #include "pam_auth.h"
 #include "session.h"
 
@@ -46,6 +47,8 @@ static int session_count = 0;
 static session_t *sessions = NULL;
 static bool mock_mode = false;
 static bool autologin_enabled = false;
+static bool tty_switching = true;
+static int target_vt = 0;
 static char status_message[64] = "Welcome to VAXP OS";
 static char active_layout[8] = "EN";
 
@@ -1057,6 +1060,35 @@ static void cleanup_graphics() {
     }
 }
 
+// Helper to find the next available virtual terminal
+static int get_next_free_vt() {
+    int fd = open("/dev/tty0", O_WRONLY);
+    if (fd < 0) {
+        return -1;
+    }
+    int vt_num = -1;
+    if (ioctl(fd, VT_OPENQRY, &vt_num) < 0 || vt_num <= 0) {
+        close(fd);
+        return -1;
+    }
+    close(fd);
+    return vt_num;
+}
+
+// Helper to switch to a specific virtual terminal
+static void switch_vt(const char *tty_name) {
+    if (!tty_name) return;
+    int vt_num = -1;
+    if (sscanf(tty_name, "/dev/tty%d", &vt_num) == 1 && vt_num > 0) {
+        int fd = open("/dev/tty0", O_WRONLY);
+        if (fd >= 0) {
+            ioctl(fd, VT_ACTIVATE, vt_num);
+            ioctl(fd, VT_WAITACTIVE, vt_num);
+            close(fd);
+        }
+    }
+}
+
 static bool attempt_login(bool is_autologin) {
     if (strlen(username) == 0) {
         strcpy(status_message, "Username cannot be empty");
@@ -1083,8 +1115,33 @@ static bool attempt_login(bool is_autologin) {
         return false;
     }
 
-    const char *tty = ttyname(STDIN_FILENO);
-    if (!pam_session_start(pam_sess, tty, sessions[selected_session_idx].type)) {
+    // Determine TTY to launch session on
+    char target_tty[32] = "";
+    char orig_tty[32] = "";
+    const char *current_tty = ttyname(STDIN_FILENO);
+    if (current_tty) {
+        snprintf(orig_tty, sizeof(orig_tty), "%s", current_tty);
+    } else {
+        strcpy(orig_tty, "/dev/tty1");
+    }
+
+    if (!mock_mode && tty_switching) {
+        int vt_num = -1;
+        if (target_vt > 0) {
+            vt_num = target_vt;
+        } else {
+            vt_num = get_next_free_vt();
+        }
+        if (vt_num > 0) {
+            snprintf(target_tty, sizeof(target_tty), "/dev/tty%d", vt_num);
+        } else {
+            snprintf(target_tty, sizeof(target_tty), "%s", orig_tty);
+        }
+    } else {
+        snprintf(target_tty, sizeof(target_tty), "%s", orig_tty);
+    }
+
+    if (!pam_session_start(pam_sess, target_tty, sessions[selected_session_idx].type)) {
         strcpy(status_message, "Failed to start PAM session");
         theme_status_r = 0.953; theme_status_g = 0.545; theme_status_b = 0.659;
         pam_session_free(pam_sess);
@@ -1093,7 +1150,12 @@ static bool attempt_login(bool is_autologin) {
 
     cleanup_graphics();
     printf("Authentication successful. Launching %s...\n", sessions[selected_session_idx].name);
-    launch_session(&sessions[selected_session_idx], username, tty, mock_mode);
+    launch_session(&sessions[selected_session_idx], username, target_tty, mock_mode);
+
+    // Switch back to original TTY after session ends
+    if (!mock_mode && tty_switching) {
+        switch_vt(orig_tty);
+    }
 
     pam_session_close(pam_sess);
     pam_session_free(pam_sess);
@@ -1924,6 +1986,15 @@ int main(int argc, char **argv) {
     parse_hex_color(hex_status, &theme_status_r, &theme_status_g, &theme_status_b);
 
     discover_users();
+
+    // TTY switching configuration
+    char tty_switch_val[32] = "";
+    read_config_string("tty_switching", tty_switch_val, sizeof(tty_switch_val), "true");
+    tty_switching = (strcmp(tty_switch_val, "false") != 0);
+
+    char target_vt_val[32] = "";
+    read_config_string("target_vt", target_vt_val, sizeof(target_vt_val), "0");
+    target_vt = atoi(target_vt_val);
     
     char autologin_val[32] = "";
     read_config_string("autologin", autologin_val, sizeof(autologin_val), "false");
@@ -1933,7 +2004,7 @@ int main(int argc, char **argv) {
     char conf_user[32] = "";
     read_config_string("autologin_user", conf_user, sizeof(conf_user), "");
     if (strlen(conf_user) > 0) {
-        strncpy(username, conf_user, sizeof(username) - 1);
+        snprintf(username, sizeof(username), "%s", conf_user);
         for (int i = 0; i < system_user_count; i++) {
             if (strcmp(system_users[i], conf_user) == 0) {
                 selected_user_idx = i;
@@ -1941,7 +2012,7 @@ int main(int argc, char **argv) {
             }
         }
     } else if (system_user_count > 0) {
-        strncpy(username, system_users[0], sizeof(username) - 1);
+        snprintf(username, sizeof(username), "%s", system_users[0]);
         selected_user_idx = 0;
     }
     
