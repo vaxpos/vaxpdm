@@ -1,0 +1,13 @@
+#%PAM-1.0
+
+# Block login if they are globally disabled
+auth      requisite     pam_nologin.so
+
+# Permit login without password for autologin (exclude root for safety)
+auth      required      pam_succeed_if.so user != root quiet_success
+auth      required      pam_permit.so
+
+# Standard Un*x account and session
+account   include       vaxp-dm
+session   include       vaxp-dm
+password  include       vaxp-dm

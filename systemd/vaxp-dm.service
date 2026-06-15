@@ -1,0 +1,19 @@
+[Unit]
+Description=VAXP TUI Display Manager
+After=systemd-user-sessions.service plymouth-quit-active.service getty@tty1.service systemd-logind.service
+Conflicts=getty@tty1.service
+
+[Service]
+Type=simple
+Environment=LANG=en_US.UTF-8
+ExecStart=/usr/local/bin/tui-dm
+StandardInput=tty
+StandardOutput=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+Restart=always
+RestartSec=1s
+
+[Install]
+Alias=display-manager.service
